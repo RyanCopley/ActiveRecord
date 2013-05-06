@@ -9,7 +9,7 @@
 #import "ActiveRecord.h"
 
 @implementation ActiveRecord
-@synthesize errorText;
+@synthesize errorText, pkName;
 
 -(id)init{
     self = [super init];
@@ -62,7 +62,7 @@
 
     [self loadFromDictionary:tmp];
     
-    return [self copy];
+    return self;
 }
 
 
@@ -88,6 +88,8 @@
         NSData* d = [NSData dataWithContentsOfFile: filePath];
         NSDictionary* tmp = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingAllowFragments error:nil];
         [self loadFromDictionary:tmp];
+        [self debug];
+        
         id comparison = [self performSelector: NSSelectorFromString(attribute)];
         
         if ([comparison isEqual:value]){
@@ -184,20 +186,42 @@
 -(void) loadFromDictionary:(NSDictionary*)dict{
     //Abusing selectors to reload data
     for (NSString* varName in data) {
+        NSDictionary* tmpData = [dict objectForKey: varName];
+        
+        
         NSString* setConversion = [NSString stringWithFormat:@"set%@%@:", [[varName substringToIndex:1] uppercaseString],[varName substringFromIndex:1]];
         @try {
-            [self performSelector:NSSelectorFromString(setConversion) withObject: [dict objectForKey:varName]];
+            /*if ([value isKindOfClass:[ActiveRecord class]]){
+             NSLog(@"Loading from dictionray of a primary key");
+             NSString* primaryKey = [dict objectForKey:varName];
+             ActiveRecord* model = [[classType newRecord] findByPk: primaryKey];
+             [self performSelector:NSSelectorFromString(setConversion) withObject: model];
+             }else{
+             */
+            
+            if ([tmpData objectForKey:@"isRelation"] == [NSNumber numberWithInt:0]){
+                [self performSelector:NSSelectorFromString(setConversion) withObject: [tmpData objectForKey:@"value"]];
+            }else{
+                
+                Class objClass = NSClassFromString([tmpData objectForKey:@"type"]);
+                id obj = [[objClass alloc] init];
+                [obj findByPk:[tmpData objectForKey:@"value"]];
+                
+                [self performSelector:NSSelectorFromString(setConversion) withObject: obj];
+            }
+            
+            
         }
+        
         @catch (NSException* e){
             NSLog(@"Error thrown! This object is not properly synthesized. Unable to set: %@", varName);
         }
+        
+        
     }
+    NSLog(@"Final: %@",self);
 }
 
-
--(NSString*)description{
-    return [NSString stringWithFormat:@"%@<%p> Properties %@", NSStringFromClass([self class]), self, data];
-}
 
 
 -(BOOL)save{
@@ -206,13 +230,31 @@
     for (NSString* varName in data) {
         @try{
             id value = [self performSelector: NSSelectorFromString(varName)];
-            [save setObject:value forKey:varName];
+            
+            
+            NSMutableDictionary* saveDict = [[NSMutableDictionary alloc] init];
+            [saveDict setObject:value forKey:@"value"];
+            [saveDict setObject:NSStringFromClass([value class]) forKey:@"type"];
+            [saveDict setObject:[NSNumber numberWithInt:0] forKey:@"isRelation"];
+            
+            
+            if ([value isKindOfClass:[ActiveRecord class]]){
+                value = [value performSelector: NSSelectorFromString([value pkName] )];
+                [saveDict setObject:value forKey:@"value"];
+                [saveDict setObject:[NSNumber numberWithInt:1] forKey:@"isRelation"];
+            }
+            
+            [save setObject:saveDict forKey:varName];
+            
+            
+            
         }
         @catch (NSException* e){
             NSLog(@"Error thrown! This object is not properly synthesized. Unable to get property: %@",varName);
         }
         
     }
+    
     
     NSString *jsonString;
     NSError *error;
@@ -247,6 +289,19 @@
     }
 }
 
+-(BOOL)deleteRecord{
+    NSString* primaryKey = [self performSelector: NSSelectorFromString(pkName)];
+    
+    
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDirectory = [paths objectAtIndex:0];
+    
+    NSString *archiveName = [NSString stringWithFormat:@"%@/ActiveRecords/%@-%@.json(%@)", documentsDirectory, [self recordIdentifier], primaryKey, pkName];
+    
+    [[NSFileManager defaultManager] removeItemAtPath:archiveName error:nil];
+    return YES;
+}
+
 -(NSString*)recordIdentifier{
     return NSStringFromClass([self class]);
 }
@@ -261,5 +316,22 @@
     if (![[NSFileManager defaultManager] fileExistsAtPath:dataPath]){
         [[NSFileManager defaultManager] createDirectoryAtPath:dataPath withIntermediateDirectories:NO attributes:nil error:&error]; //Create folder
     }
+}
+
+
+-(NSString*)description{
+    return [NSString stringWithFormat:@"%@<%p> Properties %@", NSStringFromClass([self class]), self, data];
+}
+
+#pragma mark Debug method to output entire object to console.
+-(void)debug{
+    NSLog(@"-------------------------------------");
+    for (NSString* varName in data) {
+        
+        id comparison = [self performSelector: NSSelectorFromString(varName)];
+        NSLog(@"%@ = %@",varName,comparison);
+    }
+    
+    NSLog(@"++++++++++++++++++++++++++++++++++++++++");
 }
 @end

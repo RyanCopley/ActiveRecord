@@ -14,6 +14,7 @@
 }
 
 @property (nonatomic, retain) NSString* errorText;
+@property (nonatomic, retain) NSString* pkName;
 
 +(id) newRecord;
 +(id) model;
@@ -22,13 +23,14 @@
 -(id) findByPk: (NSString*)value;
 -(id) findByAttribute: (NSString*) attribute equals:(id) value;
 
--(NSArray*) findAllByAttribute: (NSString*) attribute isIn:(NSArray*) values;
 -(NSArray*) findAllByAttribute: (NSString*) attribute equals:(id) value;
-
+-(NSArray*) findAllByAttribute: (NSString*) attribute isIn:(NSArray*) values;
 
 -(BOOL)registerVariable:(NSString*) title;
 -(BOOL)registerPrimaryKey:(NSString*) title;
 -(BOOL)save;
+-(BOOL)deleteRecord;
 
 -(NSString*)recordIdentifier;
+
 @end
