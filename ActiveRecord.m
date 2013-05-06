@@ -15,12 +15,16 @@
     self = [super init];
     if (self){
         data = [[NSMutableArray alloc] init];
-        [self checkFolder];
+        [ActiveRecord checkFolder];
     }
     return self;
 }
 
 +(id) newRecord{
+    return [[[self class] alloc] init];
+}
+
++(id) model{
     return [[[self class] alloc] init];
 }
 
@@ -32,6 +36,7 @@
     [data addObject:title];
     return YES;
 }
+
 -(BOOL)registerPrimaryKey:(NSString*) title{
     pkName = title;
     return YES;
@@ -39,7 +44,7 @@
 
 
 
--(BOOL)findByPk: (NSString*)value{
+-(id)findByPk: (NSString*)value{
     
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
     NSString *documentsDirectory = [paths objectAtIndex:0];
@@ -47,8 +52,8 @@
     NSString *archiveName = [NSString stringWithFormat:@"%@/ActiveRecords/%@-%@.json(%@)", documentsDirectory, [self recordIdentifier], value, pkName];
     
     if (![[NSFileManager defaultManager] fileExistsAtPath:archiveName]){
-        errorText = @"Model for primray key not found";
-        return NO;
+        errorText = @"Model for primary key not found";
+        return nil;
     }
     
     NSData* d = [NSData dataWithContentsOfFile:archiveName];
@@ -57,11 +62,11 @@
 
     [self loadFromDictionary:tmp];
     
-    return YES;
+    return [self copy];
 }
 
 
--(BOOL)findByAttribute: (NSString*) attribute equals:(id) value{
+-(id)findByAttribute: (NSString*) attribute equals:(id) value{
     
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
     NSString *documentsDirectory = [paths objectAtIndex:0];
@@ -86,13 +91,57 @@
         id comparison = [self performSelector: NSSelectorFromString(attribute)];
         
         if ([comparison isEqual:value]){
-            return YES;
+            return self;
         }
     }
     
-    return NO;
+    return nil;
 }
 
+
+#pragma mark Untested Function: -[ActiveRecord findAllByAttributes: isIn:];
+-(NSArray*) findAllByAttribute: (NSString*) attribute isIn:(NSArray*) values{
+    
+    
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDirectory = [paths objectAtIndex:0];
+    
+    NSString *archivePath = [NSString stringWithFormat:@"%@/ActiveRecords/", documentsDirectory];
+    
+    NSArray *dirContents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:archivePath error:nil];
+    
+    NSMutableArray* potentialFiles = [[NSMutableArray alloc] init];
+    
+    for (NSString *tString in dirContents) {
+        if ([[tString substringToIndex: [self recordIdentifier].length ] isEqualToString: [self recordIdentifier]]){
+            [potentialFiles addObject:[NSString stringWithFormat:@"%@%@",archivePath,tString]];
+        }
+    }
+    
+    NSMutableArray* tmpReturn = [[NSMutableArray alloc] init];
+    
+    for (NSString* filePath in potentialFiles) {
+        
+        NSData* d = [NSData dataWithContentsOfFile: filePath];
+        NSDictionary* tmp = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingAllowFragments error:nil];
+        id tmpObj = [[[self class] alloc] init];
+        
+        [tmpObj loadFromDictionary:tmp];
+        
+        id comparison = [tmpObj performSelector: NSSelectorFromString(attribute)];
+        
+        NSUInteger isIn = [values indexOfObject:comparison];
+        
+        if (isIn != NSNotFound){
+            [tmpReturn addObject:tmpObj];
+        }
+        
+    }
+    
+    return tmpReturn;
+
+
+}
 
 -(NSArray*) findAllByAttribute: (NSString*) attribute equals:(id) value{
     
@@ -117,11 +166,14 @@
         
         NSData* d = [NSData dataWithContentsOfFile: filePath];
         NSDictionary* tmp = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingAllowFragments error:nil];
-        [self loadFromDictionary:tmp];
-        id comparison = [self performSelector: NSSelectorFromString(attribute)];
+        id tmpObj = [[[self class] alloc] init];
+        
+        [tmpObj loadFromDictionary:tmp];
+        
+        id comparison = [tmpObj performSelector: NSSelectorFromString(attribute)];
         
         if ([comparison isEqual:value]){
-            [tmpReturn addObject:[self copy]];
+            [tmpReturn addObject:tmpObj];
         }
     }
     
@@ -199,7 +251,7 @@
     return NSStringFromClass([self class]);
 }
 
--(void) checkFolder{
++(void) checkFolder{
     
     NSError *error;
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);

@@ -16,9 +16,13 @@
 @property (nonatomic, retain) NSString* errorText;
 
 +(id) newRecord;
++(id) model;
 
--(BOOL) findByPk: (NSString*)value;
--(BOOL) findByAttribute: (NSString*) attribute equals:(id) value;
+
+-(id) findByPk: (NSString*)value;
+-(id) findByAttribute: (NSString*) attribute equals:(id) value;
+
+-(NSArray*) findAllByAttribute: (NSString*) attribute isIn:(NSArray*) values;
 -(NSArray*) findAllByAttribute: (NSString*) attribute equals:(id) value;
 
 
