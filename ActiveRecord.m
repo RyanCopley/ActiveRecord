@@ -8,6 +8,9 @@
 
 #import "ActiveRecord.h"
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+
 @implementation ActiveRecord
 @synthesize errorText, pkName;
 
@@ -20,14 +23,13 @@
     return self;
 }
 
-+(id) newRecord{
-    return [[[self class] alloc] init];
-}
+//Just to make the call look more PHP/Yii like.
++(id) newRecord{ return [[[self class] alloc] init]; }
++(id) model{ return [[[self class] alloc] init];}
 
-+(id) model{
-    return [[[self class] alloc] init];
-}
 
+//This function registers variables by NAME.
+//It does this to keep an absolute reference to the objects values (via abusing the obj-c selector)
 -(BOOL)registerVariable:(NSString*) title{
     if (pkName == nil){
         pkName = title; //Assume if not set. Better safe than sorry.
@@ -56,11 +58,14 @@
         return nil;
     }
     
-    NSData* d = [NSData dataWithContentsOfFile:archiveName];
-    
-    NSDictionary* tmp = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingAllowFragments error:nil];
-
-    [self loadFromDictionary:tmp];
+    @try {
+        NSData* d = [NSData dataWithContentsOfFile:archiveName];
+        NSDictionary* tmp = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingAllowFragments error:nil];
+        [self loadFromDictionary:tmp];
+    }
+    @catch (NSException* ex){
+        NSLog(@"Unable to find by PK");
+    }
     
     return self;
 }
@@ -84,65 +89,24 @@
     }
     
     for (NSString* filePath in potentialFiles) {
+        @try {
+            NSData* d = [NSData dataWithContentsOfFile: filePath];
+            NSDictionary* tmp = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingAllowFragments error:nil];
+            [self loadFromDictionary:tmp];
         
-        NSData* d = [NSData dataWithContentsOfFile: filePath];
-        NSDictionary* tmp = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingAllowFragments error:nil];
-        [self loadFromDictionary:tmp];
-        [self debug];
+            id comparison = [self performSelector: NSSelectorFromString(attribute)];
         
-        id comparison = [self performSelector: NSSelectorFromString(attribute)];
         
-        if ([comparison isEqual:value]){
-            return self;
+            if ([comparison isEqual:value]){
+                return self;
+            }
+        }
+        @catch (NSException* ex){
+            NSLog(@"Unable to process file: %@",filePath);
         }
     }
-    
+
     return nil;
-}
-
-
-#pragma mark Untested Function: -[ActiveRecord findAllByAttributes: isIn:];
--(NSArray*) findAllByAttribute: (NSString*) attribute isIn:(NSArray*) values{
-    
-    
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsDirectory = [paths objectAtIndex:0];
-    
-    NSString *archivePath = [NSString stringWithFormat:@"%@/ActiveRecords/", documentsDirectory];
-    
-    NSArray *dirContents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:archivePath error:nil];
-    
-    NSMutableArray* potentialFiles = [[NSMutableArray alloc] init];
-    
-    for (NSString *tString in dirContents) {
-        if ([[tString substringToIndex: [self recordIdentifier].length ] isEqualToString: [self recordIdentifier]]){
-            [potentialFiles addObject:[NSString stringWithFormat:@"%@%@",archivePath,tString]];
-        }
-    }
-    
-    NSMutableArray* tmpReturn = [[NSMutableArray alloc] init];
-    
-    for (NSString* filePath in potentialFiles) {
-        
-        NSData* d = [NSData dataWithContentsOfFile: filePath];
-        NSDictionary* tmp = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingAllowFragments error:nil];
-        id tmpObj = [[[self class] alloc] init];
-        
-        [tmpObj loadFromDictionary:tmp];
-        
-        id comparison = [tmpObj performSelector: NSSelectorFromString(attribute)];
-        
-        NSUInteger isIn = [values indexOfObject:comparison];
-        
-        if (isIn != NSNotFound){
-            [tmpReturn addObject:tmpObj];
-        }
-        
-    }
-    
-    return tmpReturn;
-
-
 }
 
 -(NSArray*) findAllByAttribute: (NSString*) attribute equals:(id) value{
@@ -166,38 +130,84 @@
     
     for (NSString* filePath in potentialFiles) {
         
-        NSData* d = [NSData dataWithContentsOfFile: filePath];
-        NSDictionary* tmp = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingAllowFragments error:nil];
-        id tmpObj = [[[self class] alloc] init];
+        @try{
+            NSData* d = [NSData dataWithContentsOfFile: filePath];
+            NSDictionary* tmp = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingAllowFragments error:nil];
+            id tmpObj = [[[self class] alloc] init];
         
-        [tmpObj loadFromDictionary:tmp];
+            [tmpObj loadFromDictionary:tmp];
         
-        id comparison = [tmpObj performSelector: NSSelectorFromString(attribute)];
+            id comparison = [tmpObj performSelector: NSSelectorFromString(attribute)];
         
-        if ([comparison isEqual:value]){
-            [tmpReturn addObject:tmpObj];
+            if ([comparison isEqual:value]){
+                [tmpReturn addObject:tmpObj];
+            }
         }
+        @catch (NSException* ex){
+            NSLog(@"Unable to process file: %@",filePath);
+        }
+    
+    }
+
+    return tmpReturn;
+}
+
+
+#pragma mark Untested Function: -[ActiveRecord findAllByAttributes: isIn:];
+-(NSArray*) findAllByAttribute: (NSString*) attribute isIn:(NSArray*) values{
+    
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDirectory = [paths objectAtIndex:0];
+    
+    NSString *archivePath = [NSString stringWithFormat:@"%@/ActiveRecords/", documentsDirectory];
+    
+    NSArray *dirContents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:archivePath error:nil];
+    
+    NSMutableArray* potentialFiles = [[NSMutableArray alloc] init];
+    
+    for (NSString *tString in dirContents) {
+        if ([[tString substringToIndex: [self recordIdentifier].length ] isEqualToString: [self recordIdentifier]]){
+            [potentialFiles addObject:[NSString stringWithFormat:@"%@%@",archivePath,tString]];
+        }
+    }
+    
+    NSMutableArray* tmpReturn = [[NSMutableArray alloc] init];
+    
+    for (NSString* filePath in potentialFiles) {
+        
+        @try{
+            NSData* d = [NSData dataWithContentsOfFile: filePath];
+            NSDictionary* tmp = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingAllowFragments error:nil];
+            id tmpObj = [[[self class] alloc] init];
+            
+            [tmpObj loadFromDictionary:tmp];
+            
+            id comparison = [tmpObj performSelector: NSSelectorFromString(attribute)];
+            
+            NSUInteger isIn = [values indexOfObject:comparison];
+            
+            if (isIn != NSNotFound){
+                [tmpReturn addObject:tmpObj];
+            }
+        }
+        @catch (NSException* ex){
+            NSLog(@"Unable to process file: %@",filePath);
+        }
+        
     }
     
     return tmpReturn;
 }
 
 
+
 -(void) loadFromDictionary:(NSDictionary*)dict{
-    //Abusing selectors to reload data
+    
     for (NSString* varName in data) {
         NSDictionary* tmpData = [dict objectForKey: varName];
         
-        
         NSString* setConversion = [NSString stringWithFormat:@"set%@%@:", [[varName substringToIndex:1] uppercaseString],[varName substringFromIndex:1]];
         @try {
-            /*if ([value isKindOfClass:[ActiveRecord class]]){
-             NSLog(@"Loading from dictionray of a primary key");
-             NSString* primaryKey = [dict objectForKey:varName];
-             ActiveRecord* model = [[classType newRecord] findByPk: primaryKey];
-             [self performSelector:NSSelectorFromString(setConversion) withObject: model];
-             }else{
-             */
             
             if ([tmpData objectForKey:@"isRelation"] == [NSNumber numberWithInt:0]){
                 [self performSelector:NSSelectorFromString(setConversion) withObject: [tmpData objectForKey:@"value"]];
@@ -209,17 +219,14 @@
                 
                 [self performSelector:NSSelectorFromString(setConversion) withObject: obj];
             }
-            
-            
         }
         
         @catch (NSException* e){
             NSLog(@"Error thrown! This object is not properly synthesized. Unable to set: %@", varName);
         }
         
-        
     }
-    NSLog(@"Final: %@",self);
+    
 }
 
 
@@ -255,38 +262,45 @@
         
     }
     
-    
-    NSString *jsonString;
-    NSError *error;
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:save options:NSJSONWritingPrettyPrinted error:&error];
-    
-    //Free memory up
-    save = nil;
-    
-    if (! jsonData) {
-        errorText = [NSString stringWithFormat:@"Got an error saving model: %@",error ];
-        return NO;
+    @try{
+        NSString *jsonString;
+        NSError *error;
+        NSData *jsonData = [NSJSONSerialization dataWithJSONObject:save options:NSJSONWritingPrettyPrinted error:&error];
         
-    } else {
-        jsonString = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
+        //Free memory up
+        save = nil;
+        
+        if (! jsonData) {
+            errorText = [NSString stringWithFormat:@"Got an error saving model: %@",error ];
+            return NO;
+            
+        } else {
+            jsonString = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
+        }
+        
+        NSString* primaryKey = [self performSelector: NSSelectorFromString(pkName)];
+        
+        
+        NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+        NSString *documentsDirectory = [paths objectAtIndex:0];
+        
+        NSString *archiveName = [NSString stringWithFormat:@"%@/ActiveRecords/%@-%@.json(%@)", documentsDirectory, [self recordIdentifier], primaryKey, pkName];
+        
+        [jsonString writeToFile:archiveName atomically:YES encoding:NSUTF8StringEncoding error:&error];
+        
+        if ([[NSFileManager defaultManager] isWritableFileAtPath:archiveName]) {
+            errorText = @"File not writable.";
+            return YES;
+        }else {
+            return NO;
+        }
+        
+    }
+    @catch (NSException* ex){
+        NSLog(@"Exception raised while saving - Unable to handle input.");
     }
     
-    NSString* primaryKey = [self performSelector: NSSelectorFromString(pkName)];
-    
-    
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsDirectory = [paths objectAtIndex:0];
-    
-    NSString *archiveName = [NSString stringWithFormat:@"%@/ActiveRecords/%@-%@.json(%@)", documentsDirectory, [self recordIdentifier], primaryKey, pkName];
-    
-    [jsonString writeToFile:archiveName atomically:YES encoding:NSUTF8StringEncoding error:&error];
-    
-    if ([[NSFileManager defaultManager] isWritableFileAtPath:archiveName]) {
-        errorText = @"File not writable.";
-        return YES;
-    }else {
-        return NO;
-    }
+    return NO;
 }
 
 -(BOOL)deleteRecord{
@@ -334,4 +348,7 @@
     
     NSLog(@"++++++++++++++++++++++++++++++++++++++++");
 }
+
 @end
+
+#pragma clang diagnostic pop

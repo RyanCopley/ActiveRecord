@@ -19,7 +19,6 @@
 +(id) newRecord;
 +(id) model;
 
-
 -(id) findByPk: (NSString*)value;
 -(id) findByAttribute: (NSString*) attribute equals:(id) value;
 
@@ -28,6 +27,7 @@
 
 -(BOOL)registerVariable:(NSString*) title;
 -(BOOL)registerPrimaryKey:(NSString*) title;
+
 -(BOOL)save;
 -(BOOL)deleteRecord;
 
