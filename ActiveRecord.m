@@ -20,6 +20,7 @@
 @synthesize errorText, pkName, isNewRecord;
 
 static FMDatabase *db;
+static FMDatabaseQueue *queue;
 static NSMutableArray* schemas;
 
 #pragma mark Active Record functions
@@ -36,6 +37,8 @@ static NSMutableArray* schemas;
             NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
             NSString *documentsDirectory = [paths objectAtIndex:0];
             NSString* dbPath =  [NSString stringWithFormat:@"%@/AppDocs/db.sqlite",documentsDirectory];
+            queue = [FMDatabaseQueue databaseQueueWithPath:dbPath];
+
             db = [FMDatabase databaseWithPath:dbPath];
             if (![db open]) {
                 NSLog(@"Failed to open database: %@",[self recordIdentifier]);
@@ -51,6 +54,8 @@ static NSMutableArray* schemas;
 +(id) model{ return [[[self class] alloc] init];}
 
 -(void)createSchema{
+    
+    
     if ([schemas indexOfObject:[self recordIdentifier]] == NSNotFound) {
         [schemas addObject:[self recordIdentifier]];
         NSMutableString* columnData = [[NSMutableString alloc] init];
@@ -60,7 +65,12 @@ static NSMutableArray* schemas;
         }
         
         NSString* query = [NSString stringWithFormat:@"CREATE TABLE IF NOT EXISTS %@ (%@)", [self recordIdentifier], columnData];
-        [db executeUpdate:query];
+        if (![db executeUpdate: query]){
+            if ([db lastErrorCode] != 0){
+                NSLog(@"(0xd34d4) Error %d: %@ %@", [db lastErrorCode], [db lastErrorMessage], query);
+            }
+        }
+        
     }
 }
 
@@ -114,7 +124,9 @@ static NSMutableArray* schemas;
     
     NSString* query = [NSString stringWithFormat:@"SELECT * FROM %@  WHERE `%@`='%@'", [self recordIdentifier], [self sanitize: attribute], [self sanitize: value] ];
     FMResultSet *s = [db executeQuery: query];
-    [s next];
+    if (![s next]){
+        return nil;
+    }
     
     id AR = [[[self class] alloc] init];
     [AR setIsNewRecord:[NSNumber numberWithBool:NO]];
@@ -206,11 +218,14 @@ static NSMutableArray* schemas;
     [self setIsNewRecord:[NSNumber numberWithBool:NO]];
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (![db executeUpdate: query]){
-            if ([db lastErrorCode] != 0){
-                NSLog(@"(0xd34d) Error %d: %@ %@", [db lastErrorCode], [db lastErrorMessage], query);
+        [queue inDatabase:^(FMDatabase *db) {
+            if (![db executeUpdate: query]){
+                if ([db lastErrorCode] != 0){
+                    NSLog(@"(0xd34d) Error %d: %@ %@", [db lastErrorCode], [db lastErrorMessage], query);
+                }
             }
-        }
+        }];
+        
     });
     
 
