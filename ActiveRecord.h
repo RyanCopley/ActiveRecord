@@ -11,19 +11,19 @@
     NSMutableArray* data;
     NSString* errorText;
     NSString* pkName;
+    NSNumber* isNewRecord;
 }
 
+@property (nonatomic, retain) NSNumber* isNewRecord;
 @property (nonatomic, retain) NSString* errorText;
 @property (nonatomic, retain) NSString* pkName;
 
-+(id) newRecord;
-+(id) model;
++(id)model;
 
--(id) findByPk: (NSString*)value;
--(id) findByAttribute: (NSString*) attribute equals:(id) value;
-
--(NSArray*) findAllByAttribute: (NSString*) attribute equals:(id) value;
--(NSArray*) findAllByAttribute: (NSString*) attribute isIn:(NSArray*) values;
+-(id)recordByIntPK:(int)pk;
+-(id)recordByPK:(NSNumber*)pk;
+-(id)recordsByAttribute:(NSString*)attribute value:(NSString*)value;
+-(NSArray*)allRecords;
 
 -(BOOL)registerVariable:(NSString*) title;
 -(BOOL)registerPrimaryKey:(NSString*) title;
@@ -32,5 +32,5 @@
 -(BOOL)deleteRecord;
 
 -(NSString*)recordIdentifier;
-
+-(void)createSchema;
 @end
