@@ -7,10 +7,6 @@
 //
 
 #import "ActiveRecord.h"
-#import "FMDatabase.h"
-#import "FMDatabaseAdditions.h"
-#import "FMDatabasePool.h"
-#import "FMDatabaseQueue.h"
 
 
 #pragma clang diagnostic push
@@ -19,7 +15,6 @@
 @implementation ActiveRecord
 @synthesize errorText, pkName, isNewRecord;
 
-static FMDatabase *db;
 static FMDatabaseQueue *queue;
 static NSMutableArray* schemas;
 
@@ -31,20 +26,16 @@ static NSMutableArray* schemas;
         
         data = [[NSMutableArray alloc] init];
         [ActiveRecord checkFolder];
-        if (!db){
+        if (!queue){
             schemas = [[NSMutableArray alloc] init];
-            
+                        
+                
             NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
             NSString *documentsDirectory = [paths objectAtIndex:0];
             NSString* dbPath =  [NSString stringWithFormat:@"%@/AppDocs/db.sqlite",documentsDirectory];
+            
             queue = [FMDatabaseQueue databaseQueueWithPath:dbPath];
-
-            db = [FMDatabase databaseWithPath:dbPath];
-            if (![db open]) {
-                NSLog(@"Failed to open database: %@",[self recordIdentifier]);
-            }else{
-                NSLog(@"Opened database: %@",[self recordIdentifier]);
-            }
+        
         }
         
     }
@@ -59,17 +50,21 @@ static NSMutableArray* schemas;
     if ([schemas indexOfObject:[self recordIdentifier]] == NSNotFound) {
         [schemas addObject:[self recordIdentifier]];
         NSMutableString* columnData = [[NSMutableString alloc] init];
-        [columnData appendFormat:@"%@ INTEGER PRIMARY KEY", pkName];
+        [columnData appendFormat:@"%@ INTEGER PRIMARY KEY AUTOINCREMENT", pkName];
         for (NSString* keys in data){
             [columnData appendFormat:@", %@ TEXT", keys];
         }
         
-        NSString* query = [NSString stringWithFormat:@"CREATE TABLE IF NOT EXISTS %@ (%@)", [self recordIdentifier], columnData];
-        if (![db executeUpdate: query]){
-            if ([db lastErrorCode] != 0){
-                NSLog(@"(0xd34d4) Error %d: %@ %@", [db lastErrorCode], [db lastErrorMessage], query);
+        [queue inDatabase:^(FMDatabase *db){
+            NSString* query = [NSString stringWithFormat:@"CREATE TABLE IF NOT EXISTS %@ (%@)", [self recordIdentifier], columnData];
+            NSLog(@"Query: %@", query);
+            if (![db executeUpdate: query]){
+                if ([db lastErrorCode] != 0){
+                    NSLog(@"(0xd34d4) Error %d: %@ %@", [db lastErrorCode], [db lastErrorMessage], query);
+                }
             }
-        }
+         }];
+        
         
     }
 }
@@ -92,13 +87,61 @@ static NSMutableArray* schemas;
 -(id)recordByIntPK:(int)pk{
     return [self recordByPK:[NSNumber numberWithInt:pk]];
 }
-
+-(id)recordByStringPK:(NSString*)pk{
+    NSNumberFormatter * f = [[NSNumberFormatter alloc] init];
+    [f setNumberStyle:NSNumberFormatterDecimalStyle];
+    return [self recordByPK:[f numberFromString:pk]];
+}
 -(id)recordByPK:(NSNumber*)pk{
     
-    NSString* query = [NSString stringWithFormat:@"SELECT * FROM %@  WHERE `%@`='%@' LIMIT 1", [self recordIdentifier], pkName, [self sanitize: [NSString stringWithFormat:@"%@",pk]] ];
     
-    FMResultSet *s = [db executeQuery: query];
-    if (![s next]){
+    __block NSString* query = [NSString stringWithFormat:@"SELECT * FROM %@  WHERE `%@`='%@' LIMIT 1", [self recordIdentifier], pkName, [self sanitize: [NSString stringWithFormat:@"%@",pk]] ];
+    __block FMResultSet *s;
+    __block BOOL ERROR = NO;
+    [queue inDatabase:^(FMDatabase *db) {
+        s = [db executeQuery: query];
+        if (![s next]){
+            ERROR = YES;
+        }
+    }];
+    
+    if (ERROR){
+        return nil;
+    }
+    
+    id AR = [[[self class] alloc] init];
+    [AR setIsNewRecord:[NSNumber numberWithBool:NO]];
+    
+    for (int i=0; i < [s columnCount]; i++){
+        NSString* varName = [s columnNameForIndex: i];
+        id value = [NSString stringWithFormat:@"%s",[s UTF8StringForColumnIndex:i]];
+        NSString* setConversion = [NSString stringWithFormat:@"set%@%@:", [[varName substringToIndex:1] uppercaseString],[varName substringFromIndex:1]];
+        @try {
+            [AR performSelector: NSSelectorFromString(setConversion) withObject: value];
+        }
+        @catch (NSException* e){
+            NSLog(@"[Email to ampachex@ryancopley.com please] Error thrown! This object is not properly synthesized. Unable to set: %@", varName);
+        }
+    }
+    
+    return AR;
+}
+
+-(id)recordByAttribute:(NSString*)attribute value:(NSString*)value{
+    
+    
+    __block NSString* query = [NSString stringWithFormat:@"SELECT * FROM %@  WHERE `%@`='%@' LIMIT 1", [self recordIdentifier], [self sanitize: attribute], [self sanitize: value] ];
+    
+    __block FMResultSet *s;
+    __block BOOL ERROR = NO;
+    [queue inDatabase:^(FMDatabase *db) {
+        s = [db executeQuery: query];
+        if (![s next]){
+            ERROR = YES;
+        }
+    }];
+    
+    if (ERROR){
         return nil;
     }
     
@@ -121,37 +164,17 @@ static NSMutableArray* schemas;
 }
 
 -(id)recordsByAttribute:(NSString*)attribute value:(NSString*)value{
-    
-    NSString* query = [NSString stringWithFormat:@"SELECT * FROM %@  WHERE `%@`='%@'", [self recordIdentifier], [self sanitize: attribute], [self sanitize: value] ];
-    FMResultSet *s = [db executeQuery: query];
-    if (![s next]){
-        return nil;
-    }
-    
-    id AR = [[[self class] alloc] init];
-    [AR setIsNewRecord:[NSNumber numberWithBool:NO]];
-    
-    for (int i=0; i < [s columnCount]; i++){
-        NSString* varName = [s columnNameForIndex: i];
-        id value = [NSString stringWithFormat:@"%s",[s UTF8StringForColumnIndex:i]];
-        NSString* setConversion = [NSString stringWithFormat:@"set%@%@:", [[varName substringToIndex:1] uppercaseString],[varName substringFromIndex:1]];
-        @try {
-            [AR performSelector: NSSelectorFromString(setConversion) withObject: value];
-        }
-        @catch (NSException* e){
-            NSLog(@"[Email to ampachex@ryancopley.com please] Error thrown! This object is not properly synthesized. Unable to set: %@", varName);
-        }
-    }
-    
-    return AR;
-}
-
-
--(NSArray*)allRecords{
     NSMutableArray* returnObjs = [[NSMutableArray alloc] init];
-    FMResultSet *s = [db executeQuery:[NSString stringWithFormat: @"SELECT * FROM %@", [self sanitize: [self recordIdentifier] ]]];
-     
+    
+    __block NSString* query = [NSString stringWithFormat:@"SELECT * FROM %@  WHERE `%@`='%@'", [self recordIdentifier], [self sanitize: attribute], [self sanitize: value] ];
+    __block FMResultSet *s;
+    
+    [queue inDatabase:^(FMDatabase *db) {
+        s = [db executeQuery: query];
+    
+    
     while ([s next]) {
+        
         if (1){ //Just to keep code aligned with other versions.
             id AR = [[[self class] alloc] init];
             [AR setIsNewRecord:NO];
@@ -175,6 +198,50 @@ static NSMutableArray* schemas;
             [returnObjs addObject: AR];
         }
     }
+    
+    }];
+    return returnObjs;
+}
+
+
+-(NSArray*)allRecords{
+    NSMutableArray* returnObjs = [[NSMutableArray alloc] init];
+    
+    __block NSString* query = [NSString stringWithFormat: @"SELECT * FROM %@", [self sanitize: [self recordIdentifier] ]];
+    
+    __block FMResultSet *s;
+    
+    [queue inDatabase:^(FMDatabase *db) {
+        s = [db executeQuery: query];
+    
+    
+    while ([s next]) {
+        
+        if (1){ //Just to keep code aligned with other versions.
+            id AR = [[[self class] alloc] init];
+            [AR setIsNewRecord:NO];
+            
+            for (int i=0; i < [s columnCount]; i++){
+                NSString* varName = [s columnNameForIndex: i];
+                
+                
+                if ([varName isEqualToString:@"tag"] == 0){
+                    id value = [NSString stringWithFormat:@"%s",[s UTF8StringForColumnIndex:i]];
+                    NSString* setConversion = [NSString stringWithFormat:@"set%@%@:", [[varName substringToIndex:1] uppercaseString],[varName substringFromIndex:1]];
+                    @try {
+                        [AR performSelector: NSSelectorFromString(setConversion) withObject: value];
+                    }
+                    @catch (NSException* e){
+                        NSLog(@"[Email to ampachex@ryancopley.com please] Error thrown! This object is not properly synthesized. Unable to set: %@", varName);
+                    }
+                }
+            }
+            
+            [returnObjs addObject: AR];
+        }
+    }
+    
+    }];
     return returnObjs;
 }
 
@@ -186,17 +253,15 @@ static NSMutableArray* schemas;
     
     __block NSMutableString* updateData = [[NSMutableString alloc] init];
     
-    [columnNames appendFormat:@"`%@`",pkName];
-    [columnData appendFormat:@"'%@'", [self sanitize: [self performSelector: NSSelectorFromString(pkName)]]];
-        for (NSString* varName in data) {
+    for (NSString* varName in data) {
         @try{
             id value = [self performSelector: NSSelectorFromString(varName)];
             
             if (value == nil){
                 value = @"";
             }
-            [columnNames appendFormat:@",`%@`", varName];
-            [columnData appendFormat:@",\"%@\"",[self sanitize: [self performSelector: NSSelectorFromString(varName)]]];
+            [columnNames appendFormat:@"`%@`,", varName];
+            [columnData appendFormat:@"\"%@\",",[self sanitize: [self performSelector: NSSelectorFromString(varName)]]];
             
             [updateData appendFormat:@"`%@`='%@',",varName, [self sanitize: [self performSelector: NSSelectorFromString(varName)]]];
             
@@ -206,6 +271,8 @@ static NSMutableArray* schemas;
         }
     }
     
+    columnNames = [[columnNames substringToIndex: [columnNames length]-1] mutableCopy];
+    columnData = [[columnData substringToIndex: [columnData length]-1] mutableCopy];
     updateData = [[updateData substringToIndex: [updateData length]-1] mutableCopy];
     
     NSString* query;
@@ -215,9 +282,8 @@ static NSMutableArray* schemas;
         query = [NSString stringWithFormat:@"UPDATE %@ SET %@ WHERE %@='%@'", [self recordIdentifier], updateData, pkName, [self performSelector: NSSelectorFromString(pkName)]];
     }
     
-    [self setIsNewRecord:[NSNumber numberWithBool:NO]];
+    [self setIsNewRecord:@(0)];
 
-    dispatch_async(dispatch_get_main_queue(), ^{
         [queue inDatabase:^(FMDatabase *db) {
             if (![db executeUpdate: query]){
                 if ([db lastErrorCode] != 0){
@@ -226,7 +292,6 @@ static NSMutableArray* schemas;
             }
         }];
         
-    });
     
 
     
@@ -241,7 +306,15 @@ static NSMutableArray* schemas;
 -(BOOL)deleteRecord{
     NSString* primaryKey = [self performSelector: NSSelectorFromString(pkName)];
     NSString* query = [NSString stringWithFormat:@"DELETE FROM %@ WHERE %@='%@'",[self recordIdentifier],pkName,primaryKey];
-    return [db executeUpdate:query];
+    __block BOOL ret = NO;
+    
+    [queue inDatabase:^(FMDatabase *db) {
+        if ([db executeUpdate:query]){
+            ret = YES;
+        }
+    }];
+    
+    return ret;
 }
 
 #pragma mark Misc
@@ -286,6 +359,10 @@ static NSMutableArray* schemas;
     string = [NSString stringWithFormat:@"%@",string];
     string = [string stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""];
     return string;
+}
+
+-(FMDatabaseQueue*) getDB{
+    return  queue;
 }
 
 @end
